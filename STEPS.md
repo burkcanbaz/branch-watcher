@@ -33,5 +33,7 @@ python branch_status.py --serve          # ya da .env'de BW_SERVE=true ise: pyth
 sudo ufw allow 9534/tcp
 # ya da daha dar, sadece kendi subnet'in:
 sudo ufw allow from 192.168.12.0/24 to any port 9534 proto tcp
+sudo ufw enable
+sudo ufw status
 ```
 > ufw zaten kapalıysa (inactive) hiç dokunmana gerek yok — port baştan açıktır. Kontrol: `sudo ufw status`.

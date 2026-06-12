@@ -1,0 +1,21 @@
+# Build context is the project root; keep the image small and free of secrets.
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Secrets & local state — config is injected at runtime via env_file, not baked in.
+.env
+
+# Logs (written to a mounted volume at runtime).
+*.log
+docker/logs/
+logs/
+
+# The watched repo is mounted at runtime, never copied into the image.
+repo/
+
+# VCS / docs / tooling not needed inside the image.
+.git/
+.gitignore
+README.md

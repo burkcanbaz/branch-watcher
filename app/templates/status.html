@@ -1,0 +1,83 @@
+{% macro table(commits) %}
+{% if commits %}
+<table>
+  <thead><tr><th>Date</th><th>Author</th><th>Message</th><th>Hash</th><th>#</th></tr></thead>
+  <tbody>
+    {% for c in commits %}
+    <tr><td>{{ c.date }}</td><td>{{ c.author }}</td><td>{{ c.message }}</td><td><code>{{ c.hash }}</code></td><td>{{ loop.revindex }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p>None.</p>{% endif %}
+{% endmacro %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="{{ refresh }}" />
+  <title>Branch Status — {{ s.current_branch or 'error' }}</title>
+  <style>
+    body { margin:0; background:#f4f6f8; font-family:Arial,Helvetica,sans-serif; color:#333; }
+    .wrap { max-width:860px; margin:24px auto; padding:0 16px; }
+    .card { background:#fff; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.08); overflow:hidden; margin-bottom:20px; }
+    .head { background:#1f2937; color:#fff; padding:18px 22px; }
+    .head h1 { margin:0; font-size:18px; }
+    .head .sub { color:#9ca3af; font-size:12px; margin-top:4px; }
+    .body { padding:20px 22px; }
+    .pills span { display:inline-block; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:700; margin-right:8px; color:#fff; }
+    .ahead { background:#0d6efd; } .behind { background:#dc3545; }
+    .callout { margin:16px 0; padding:12px 14px; border-radius:8px; font-size:13px; border:1px solid transparent; }
+    .warn { background:#fff8e6; border-color:#ffe08a; color:#8a6100; }
+    .ok { background:#eafaf0; border-color:#b7e4c7; color:#1b6b3a; }
+    h3 { margin:24px 0 10px; font-size:14px; }
+    table { width:100%; border-collapse:separate; border-spacing:0; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden; font-size:13px; }
+    th,td { padding:9px 12px; text-align:left; }
+    th { background:#f9fafb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:.4px; border-bottom:1px solid #e5e7eb; }
+    td { border-bottom:1px solid #f1f3f5; }
+    tbody tr:last-child td { border-bottom:none; }
+    tbody tr:nth-child(even) { background:#fbfcfd; }
+    code { background:#f3f4f6; padding:2px 6px; border-radius:4px; font-family:Consolas,Menlo,monospace; font-size:12px; color:#d6336c; }
+    .err { color:#dc3545; font-weight:bold; }
+    .foot { color:#888; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    {% if s.error %}
+    <div class="card"><div class="body">
+      <p class="err">❌ {{ s.error }}</p>
+      {% if s.current_branch %}<p>current branch: <code>{{ s.current_branch }}</code></p>{% endif %}
+    </div></div>
+    {% else %}
+    <div class="card">
+      <div class="head">
+        <h1>⚠️ Branch Status</h1>
+        <div class="sub">current .git repo directory: <code>{{ s.repo }}</code></div>
+        <div class="sub">current branch: <code>{{ s.current_branch }}</code></div>
+        <div class="sub">target branch: <code>{{ s.target_branch }}</code></div>
+      </div>
+      <div class="body">
+        <p class="pills">
+          <span class="ahead">AHEAD {{ s.ahead }}</span>
+          <span class="behind">BEHIND {{ s.behind }}</span>
+          on <code>{{ s.current_branch }}</code> vs <code>{{ s.target_branch }}</code>
+        </p>
+
+        <h3>📥 Incoming Commits From <code>{{ s.target_branch }}</code></h3>
+        {% if s.incoming_commits %}
+        <div class="callout warn">⚠️ Behind <code>{{ s.target_branch }}</code> by {{ s.behind }} commit(s). Merge or rebase before opening a PR.</div>
+        {{ table(s.incoming_commits) }}
+        {% else %}
+        <div class="callout ok">✅ Up to date with <code>{{ s.target_branch }}</code>.</div>
+        {% endif %}
+
+        <h3>📤 Local Commits — <code>{{ s.current_branch }}</code> {{ s.ahead }} ahead of <code>{{ s.target_branch }}</code></h3>
+        {{ table(s.local_commits) }}
+      </div>
+    </div>
+    {% endif %}
+    <p class="foot">Auto-refresh every {{ refresh }}s · {{ now }}</p>
+  </div>
+</body>
+</html>

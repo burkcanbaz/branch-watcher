@@ -56,11 +56,10 @@ DEFAULT_REFRESH = int(os.getenv("BW_REFRESH", "30"))
 DEFAULT_FETCH = _env_bool("BW_FETCH", False)
 DEFAULT_SERVE = _env_bool("BW_SERVE", False)
 
-# If set, the backend locks its port down to this MAC's current LAN IP (via
-# ufw) and re-applies it every BW_FIREWALL_REFRESH seconds so it keeps tracking
-# the client's IP. Empty = open to the whole LAN. See firewall.py.
-ALLOW_MAC = os.getenv("BW_ALLOW_MAC", "")
-FIREWALL_REFRESH = int(os.getenv("BW_FIREWALL_REFRESH", "600"))  # 10 minutes
+# If set, the backend locks its port down to this single client IP on startup
+# (via ufw): only this IP may reach the port, everyone else is denied. Empty =
+# open to the whole LAN. See firewall.py.
+ALLOW_IP = os.getenv("BW_ALLOW_IP", "")
 
 
 # ---------------------------------------------------------------------------
@@ -339,35 +338,18 @@ def serve(repo, target, host, port, refresh, do_fetch):
     def api():
         return jsonify(get_status(repo, target, do_fetch=do_fetch))
 
-    # Optionally lock the port down to a single machine. A background thread
-    # re-resolves the MAC -> current IP and re-applies the ufw rule every
-    # FIREWALL_REFRESH seconds, so it keeps tracking the client even if its IP
-    # changes (DHCP) while the backend is running.
-    if ALLOW_MAC:
-        import threading
-        import time
+    # Optionally lock the port down to a single client IP on startup: only
+    # BW_ALLOW_IP may reach it, everyone else is denied (via ufw).
+    if ALLOW_IP:
+        from firewall import allow_ip
 
-        from firewall import allow_only
-
-        def _refresh_firewall():
-            while True:
-                try:
-                    allowed_ip = allow_only(port, ALLOW_MAC)
-                    log.info(
-                        "Firewall: only %s (MAC %s) may reach port %s",
-                        allowed_ip, ALLOW_MAC, port,
-                    )
-                    print(
-                        f"🔒 Firewall: only {allowed_ip} (MAC {ALLOW_MAC}) may reach port {port}."
-                    )
-                except Exception as exc:
-                    log.error("Firewall refresh skipped: %s", exc)
-                    print(f"⚠️  Firewall refresh skipped: {exc}")
-                time.sleep(FIREWALL_REFRESH)
-
-        # daemon: dies with the process; first pass runs immediately at startup.
-        threading.Thread(target=_refresh_firewall, daemon=True).start()
-        print(f"   (firewall rule refreshes every {FIREWALL_REFRESH}s)")
+        try:
+            allow_ip(port, ALLOW_IP)
+            log.info("Firewall: only %s may reach port %s", ALLOW_IP, port)
+            print(f"🔒 Firewall: only {ALLOW_IP} may reach port {port}.")
+        except Exception as exc:
+            log.error("Firewall setup skipped: %s", exc)
+            print(f"⚠️  Firewall setup skipped: {exc}")
 
     ip = lan_ip()
     print(f"Serving branch status for: {repo}")

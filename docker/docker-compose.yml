@@ -16,10 +16,9 @@ services:
     # the host's network stack directly).
     network_mode: host
 
-    # Capabilities the optional firewall/scan feature needs.
+    # Capability the firewall feature needs.
     cap_add:
       - NET_ADMIN   # ufw rule changes
-      - NET_RAW     # arp-scan raw sockets
 
     # Load user config (.env at the project root). Values below override the
     # bits that differ inside the container. Path is relative to the compose
@@ -28,11 +27,6 @@ services:
       - .env
 
     environment:
-      # The app runs as the non-root `app` user, which has passwordless sudo
-      # for ONLY arp-scan/ufw (see Dockerfile). `-n` fails fast instead of
-      # hanging on a password prompt. SUDO_CMD (default "sudo -n") is used by
-      # firewall.py for ufw.
-      ARP_SCAN_CMD: "sudo -n arp-scan --localnet"
       # Always run the web server inside the container.
       BW_SERVE: "true"
       # The watched repo is mounted at /repo (see volumes).

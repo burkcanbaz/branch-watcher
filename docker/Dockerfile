@@ -1,22 +1,19 @@
 # Branch Watcher container image.
 #
 # Runs the web UI by default (branch_status.py --serve) as a non-root `app`
-# user. The optional MAC-locking firewall feature needs arp-scan + ufw, which
-# require root — so instead of running the whole app as root, the app user is
-# granted passwordless sudo for ONLY those two binaries (see the sudoers rule
-# below).
+# user. The optional port-locking firewall feature needs ufw, which requires
+# root — so instead of running the whole app as root, the app user is granted
+# passwordless sudo for ONLY ufw (see the sudoers rule below).
 FROM python:3.12-slim
 
 # Runtime deps:
 #   git       - branch comparisons / optional fetch
-#   arp-scan  - resolve a MAC to its current LAN IP   (needs root)
-#   ufw       - lock the port down to a single client (needs root)
-#   iproute2  - networking utilities arp-scan/ufw lean on
-#   sudo      - so the non-root app user can run just arp-scan/ufw as root
+#   ufw       - lock the port down to a single client IP (needs root)
+#   iproute2  - networking utilities ufw leans on
+#   sudo      - so the non-root app user can run just ufw as root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
-        arp-scan \
         ufw \
         iproute2 \
         sudo \
@@ -25,9 +22,9 @@ RUN apt-get update \
 # Non-root user the app actually runs as.
 RUN useradd --create-home --shell /bin/bash app
 
-# Grant the app user passwordless sudo for ONLY arp-scan and ufw, so the
-# optional firewall feature works without running everything as root.
-RUN echo 'app ALL=(root) NOPASSWD: /usr/sbin/arp-scan, /usr/sbin/ufw' \
+# Grant the app user passwordless sudo for ONLY ufw, so the firewall feature
+# works without running everything as root.
+RUN echo 'app ALL=(root) NOPASSWD: /usr/sbin/ufw' \
         > /etc/sudoers.d/branch-watcher \
     && chmod 0440 /etc/sudoers.d/branch-watcher
 

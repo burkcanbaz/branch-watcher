@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Lock a TCP port down to a single machine identified by its MAC address.
+"""Lock a TCP port down to a single client IP via ufw.
 
-Resolves the MAC to its *current* LAN IP (via arp_scan) and rewrites the ufw
-rules so only that IP may reach the port; everyone else is denied. Because the
-IP is looked up fresh every run, this keeps working even when the client's IP
-changes (DHCP) — just call it again (e.g. each time the backend starts).
+Rewrites the ufw rules so only the given IP may reach the port; everyone else
+is denied.
 
-Needs root for both arp-scan and ufw. Configure passwordless sudo once so it can
-run unattended from a backend (see setup-permissions.sh / README).
+Needs root for ufw. Configure passwordless sudo once so it can run unattended
+from a backend (see setup-permissions.sh / README).
 
 Usage:
-    python firewall.py --port 9534 --mac AA:BB:CC:DD:EE:FF
-    sudo python firewall.py --port 9534 --mac AA:BB:CC:DD:EE:FF
+    python firewall.py --port 9534 --ip 192.168.1.50
+    sudo python firewall.py --port 9534 --ip 192.168.1.50
 """
 
 import argparse
@@ -27,8 +25,6 @@ try:
 except ImportError:
     pass
 
-# arp_scan is the standalone scanner; firewall is where it gets integrated.
-from arp_scan import find_ip_by_mac, normalize_mac
 from logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -36,7 +32,9 @@ log = get_logger(__name__)
 # Prefix used for every privileged call. "sudo -n" fails fast instead of
 # hanging on a password prompt when run from a backend without NOPASSWD set up.
 SUDO = os.getenv("SUDO_CMD", "sudo -n").split()
-BW_ALLOW_MAC = os.getenv("BW_ALLOW_MAC", "")
+BW_ALLOW_IP = os.getenv("BW_ALLOW_IP", "")
+
+_IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
 def _ufw(*args, check=True):
@@ -61,23 +59,17 @@ def _clear_port_rules(port):
         _ufw("--force", "delete", str(n), check=False)
 
 
-def allow_only(port, mac, interface=None):
-    """Allow only the machine with `mac` to reach `port`; deny everyone else.
+def allow_ip(port, ip):
+    """Allow only `ip` to reach `port`; deny everyone else. Returns the IP.
 
-    Returns the resolved IP. Raises RuntimeError if the MAC can't be found on the
-    LAN or a ufw/sudo command fails.
+    Raises ValueError on a malformed IP or RuntimeError if a ufw command fails.
     """
-    log.info("allow_only: locking port %s to MAC %s", port, normalize_mac(mac))
-    ip = find_ip_by_mac(mac, interface=interface)
-    if ip is None:
-        log.error(
-            "allow_only: MAC %s not found on the LAN — firewall rule not changed",
-            normalize_mac(mac),
-        )
-        raise RuntimeError(
-            f"MAC {normalize_mac(mac)} not found on the LAN — firewall rule not changed."
-        )
+    ip = ip.strip()
+    if not _IP_RE.match(ip):
+        log.error("allow_ip: invalid IP address: %r", ip)
+        raise ValueError(f"Invalid IP address: {ip!r}")
 
+    log.info("allow_ip: locking port %s to IP %s", port, ip)
     try:
         _ufw("--force", "enable")          # make sure the firewall is on
         _clear_port_rules(port)            # wipe stale rules for this port
@@ -87,34 +79,31 @@ def allow_only(port, mac, interface=None):
         _ufw("deny", str(port))
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
-        log.error("allow_only: ufw command failed: %s", detail or exc)
+        log.error("allow_ip: ufw command failed: %s", detail or exc)
         raise RuntimeError(f"ufw command failed: {detail or exc}")
-    log.info("allow_only: port %s now reachable only from %s", port, ip)
+    log.info("allow_ip: port %s now reachable only from %s", port, ip)
     return ip
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Lock a port down to a single MAC's current IP via ufw."
+        description="Lock a port down to a single client IP via ufw."
     )
     parser.add_argument("--port", type=int, required=True, help="TCP port to protect")
     parser.add_argument(
-        "--mac", default=BW_ALLOW_MAC, help="MAC allowed to connect (env: BW_ALLOW_MAC)"
-    )
-    parser.add_argument(
-        "--interface", default=None, help="Network interface for arp-scan (env: ARP_INTERFACE)"
+        "--ip", default=BW_ALLOW_IP, help="IP allowed to connect (env: BW_ALLOW_IP)"
     )
     args = parser.parse_args()
 
-    if not args.mac:
-        parser.error("a MAC is required (pass --mac or set BW_ALLOW_MAC)")
+    if not args.ip:
+        parser.error("an IP is required (pass --ip or set BW_ALLOW_IP)")
 
     try:
-        ip = allow_only(args.port, args.mac, interface=args.interface)
+        ip = allow_ip(args.port, args.ip)
     except (ValueError, RuntimeError) as exc:
         print(f"❌ {exc}")
         sys.exit(1)
-    print(f"✅ Port {args.port} now reachable only from {ip} (MAC {normalize_mac(args.mac)}).")
+    print(f"✅ Port {args.port} now reachable only from {ip}.")
 
 
 if __name__ == "__main__":

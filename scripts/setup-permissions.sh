@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
-# Grant the current user passwordless sudo for ONLY arp-scan and ufw, so the
-# backend can resolve the allowed client's IP and update the firewall on startup
-# without a password prompt. Run once, on the machine that hosts the backend:
+# Grant the current user passwordless sudo for ONLY ufw, so the backend can
+# update the firewall on startup without a password prompt. Run once, on the
+# machine that hosts the backend:
 #
 #     ./setup-permissions.sh
 #
 # Re-run is safe (it overwrites the same file).
 set -euo pipefail
 
-ARP_SCAN_BIN="$(command -v arp-scan || echo /usr/sbin/arp-scan)"
 UFW_BIN="$(command -v ufw || echo /usr/sbin/ufw)"
 USER_NAME="${SUDO_USER:-$USER}"
 SUDOERS_FILE="/etc/sudoers.d/branch-watcher"
 
-RULE="$USER_NAME ALL=(root) NOPASSWD: $ARP_SCAN_BIN, $UFW_BIN"
+RULE="$USER_NAME ALL=(root) NOPASSWD: $UFW_BIN"
 
 echo "Granting passwordless sudo to '$USER_NAME' for:"
-echo "  $ARP_SCAN_BIN"
 echo "  $UFW_BIN"
 
 # Write via a temp file + visudo -c so a typo can never lock you out of sudo.

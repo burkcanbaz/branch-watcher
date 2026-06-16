@@ -33,14 +33,23 @@ services:
       BW_REPO: "/repo"
       # Persist logs to the named volume below.
       BW_LOG_FILE: "/app/logs/branch_watcher.log"
+      # The container runs as root, so the firewall calls ufw directly — no sudo
+      # wrapper (sudo isn't installed in the image). Empty = run ufw as-is.
+      SUDO_CMD: ""
 
     volumes:
       # The git repository you want to watch: BW_REPO from .env is the path on
       # the HOST and is mounted to /repo inside the container (the BW_REPO env
-      # above points the app at /repo). Read-only is enough unless --fetch.
-      - ${BW_REPO:-./repo}:/repo:ro
-      # Persisted, rotating log files. A named volume (not a host bind mount)
-      # so the non-root `app` user keeps ownership and can write to it.
+      # above points the app at /repo). Writable (not :ro) so BW_FETCH can
+      # update the remote-tracking refs; the container runs as root, so it can
+      # write into the host-owned repo. NOTE: objects fetched this way land in
+      # the host .git owned by root — set BW_FETCH=false if that's a problem.
+      - ${BW_REPO:-./repo}:/repo
+      # The host user's SSH keys, so `git fetch` over an SSH remote works
+      # (container runs as root -> /root/.ssh). Read-only. Harmless if BW_FETCH
+      # is off or the remote is HTTPS.
+      - ${HOME}/.ssh:/root/.ssh:ro
+      # Persisted, rotating log files in a named volume.
       - branch-watcher-logs:/app/logs
 
     restart: unless-stopped

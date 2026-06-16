@@ -1,32 +1,27 @@
 # Branch Watcher container image.
 #
-# Runs the web UI by default (branch_status.py --serve) as a non-root `app`
-# user. The optional port-locking firewall feature needs ufw, which requires
-# root — so instead of running the whole app as root, the app user is granted
-# passwordless sudo for ONLY ufw (see the sudoers rule below).
+# Runs the web UI by default as ROOT. The watched git repo is bind-mounted from
+# the host and is owned by the host user; running as root means git can both
+# read it and (for BW_FETCH) write into it regardless of host ownership, and the
+# port-locking firewall (ufw) needs root anyway. This is a trusted LAN dev tool,
+# so root in the container is an acceptable trade for "it just works" on every
+# teammate's machine.
 FROM python:3.12-slim
 
 # Runtime deps:
-#   git       - branch comparisons / optional fetch
-#   ufw       - lock the port down to a single client IP (needs root)
-#   iproute2  - networking utilities ufw leans on
-#   sudo      - so the non-root app user can run just ufw as root
+#   git            - branch comparisons / optional fetch
+#   openssh-client - so `git fetch` over SSH remotes works (needs the host's
+#                    keys/agent mounted in; see compose). Without it git errors
+#                    with "cannot run ssh".
+#   ufw            - lock the port down to a single client IP (needs root)
+#   iproute2       - networking utilities ufw leans on
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
+        openssh-client \
         ufw \
         iproute2 \
-        sudo \
     && rm -rf /var/lib/apt/lists/*
-
-# Non-root user the app actually runs as.
-RUN useradd --create-home --shell /bin/bash app
-
-# Grant the app user passwordless sudo for ONLY ufw, so the firewall feature
-# works without running everything as root.
-RUN echo 'app ALL=(root) NOPASSWD: /usr/sbin/ufw' \
-        > /etc/sudoers.d/branch-watcher \
-    && chmod 0440 /etc/sudoers.d/branch-watcher
 
 WORKDIR /app
 
@@ -38,18 +33,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # logging_setup.py and templates/).
 COPY app/ ./
 
-# Logs dir owned by the app user (a named volume in compose preserves this
-# ownership so the non-root process can write to it).
-RUN mkdir -p /app/logs && chown -R app:app /app
+RUN mkdir -p /app/logs
 
-# The watched repo is bind-mounted at /repo and is owned by the HOST user, not
-# the container's `app` user. Without this, every git command fails with
-# "detected dubious ownership in repository at '/repo'" and the app can't read
-# the branch or compute the diff. Mark it safe system-wide so `app` can use it.
+# The repo bind-mounted at /repo is owned by the HOST user, not by whoever runs
+# git inside the container (root included — git still flags a foreign-owned repo
+# as "dubious ownership"). Mark it safe system-wide so git works regardless.
 RUN git config --system --add safe.directory /repo \
     && git config --system --add safe.directory '*'
-
-USER app
 
 # Default web UI port (override with BW_PORT).
 EXPOSE 9534

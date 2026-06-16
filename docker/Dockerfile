@@ -42,9 +42,16 @@ COPY app/ ./
 # ownership so the non-root process can write to it).
 RUN mkdir -p /app/logs && chown -R app:app /app
 
+# The watched repo is bind-mounted at /repo and is owned by the HOST user, not
+# the container's `app` user. Without this, every git command fails with
+# "detected dubious ownership in repository at '/repo'" and the app can't read
+# the branch or compute the diff. Mark it safe system-wide so `app` can use it.
+RUN git config --system --add safe.directory /repo \
+    && git config --system --add safe.directory '*'
+
 USER app
 
 # Default web UI port (override with BW_PORT).
 EXPOSE 9534
 
-CMD ["python", "branch_status.py", "--serve"]
+CMD ["python", "branch_status.py"]

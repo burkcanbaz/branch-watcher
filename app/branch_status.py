@@ -150,15 +150,27 @@ def get_status(repo, target, do_fetch=False):
         log.error("get_status: no git repository found at %s", repo)
         return {"error": f"No git repository found at: {repo}"}
 
-    # Probe with a plain git call: if this fails it's a real git problem
-    # (e.g. "dubious ownership" on a teammate's box, or a corrupt repo) and we
-    # surface it instead of later misreporting it as "branch not found".
+    # Probe with a plain git call. The classic cross-machine failure is git
+    # refusing a repo owned by another user ("detected dubious ownership") —
+    # very common when the repo is bind-mounted into a container or sits in a
+    # teammate's tree. Self-heal by marking it safe and retrying, then surface
+    # anything still broken instead of misreporting it as "branch not found".
     try:
         git(repo, "rev-parse", "--git-dir")
     except subprocess.CalledProcessError as exc:
         detail = exc.output.decode(errors="replace").strip()
-        log.error("get_status: git unusable in %s: %s", repo, detail)
-        return {"error": f"git error: {detail}"}
+        if "dubious ownership" in detail.lower():
+            log.warning("get_status: marking %s as a safe.directory and retrying", repo)
+            try:
+                git(repo, "config", "--global", "--add", "safe.directory", repo)
+                git(repo, "rev-parse", "--git-dir")
+            except subprocess.CalledProcessError as exc2:
+                detail = exc2.output.decode(errors="replace").strip()
+                log.error("get_status: git still unusable in %s: %s", repo, detail)
+                return {"error": f"git error: {detail}"}
+        else:
+            log.error("get_status: git unusable in %s: %s", repo, detail)
+            return {"error": f"git error: {detail}"}
 
     current_branch = get_current_branch(repo)
 

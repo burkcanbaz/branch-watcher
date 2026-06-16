@@ -1,28 +1,25 @@
 #!/usr/bin/env python3
-"""Branch status watcher.
+"""Branch status watcher (Flask app).
 
-Given a path to a git working tree it:
+Driven entirely by .env (see .env.example). For the repo at BW_REPO it:
   * reads the current branch from .git/HEAD
-  * compares the current branch against a target branch (default origin/develop)
+  * compares it against BW_TARGET (e.g. origin/develop)
   * reports how many commits the local branch is ahead / behind
   * lists local commits (target..HEAD) and incoming commits (HEAD..target)
 
-Usage:
-    python branch_status.py /path/to/repo
-    python branch_status.py /path/to/repo --target origin/main
-    python branch_status.py /path/to/repo --fetch        # refresh remote first
-    python branch_status.py /path/to/repo --serve        # web UI on the LAN
-
-All defaults can be overridden with environment variables (see .env.example).
+Run it as a Flask app:
+    python branch_status.py          # uses BW_HOST / BW_PORT
+    flask --app branch_status run
 """
 
-import argparse
 import os
 import socket
 import subprocess
-import sys
+from datetime import datetime
 
-# Optional: load a local .env so the same script can be reconfigured on another
+from flask import Flask, jsonify, render_template
+
+# Optional: load a local .env so the same app can be reconfigured on another
 # machine just by editing values, without touching the code.
 try:
     from dotenv import load_dotenv
@@ -37,7 +34,7 @@ log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Configuration (env-driven so the script is portable across machines)
+# Configuration (env-driven so the app is portable across machines)
 # ---------------------------------------------------------------------------
 def _env_bool(name, default=False):
     val = os.getenv(name)
@@ -46,15 +43,12 @@ def _env_bool(name, default=False):
     return val.strip().lower() in {"1", "true", "yes", "on"}
 
 
-# Static defaults pulled out into the environment. Override any of these in a
-# .env file or the shell environment when running on a different PC/network.
-DEFAULT_REPO = os.getenv("BW_REPO", "")
-DEFAULT_TARGET = os.getenv("BW_TARGET", "origin/develop")
-DEFAULT_HOST = os.getenv("BW_HOST", "0.0.0.0")
-DEFAULT_PORT = int(os.getenv("BW_PORT", "9534"))
-DEFAULT_REFRESH = int(os.getenv("BW_REFRESH", "30"))
-DEFAULT_FETCH = _env_bool("BW_FETCH", False)
-DEFAULT_SERVE = _env_bool("BW_SERVE", False)
+REPO = os.path.abspath(os.path.expanduser(os.getenv("BW_REPO", "")))
+TARGET = os.getenv("BW_TARGET", "origin/develop")
+HOST = os.getenv("BW_HOST", "0.0.0.0")
+PORT = int(os.getenv("BW_PORT", "9534"))
+REFRESH = int(os.getenv("BW_REFRESH", "30"))
+FETCH = _env_bool("BW_FETCH", False)
 
 # If set, the backend locks its port down to this single client IP on startup
 # (via ufw): only this IP may reach the port, everyone else is denied. Empty =
@@ -203,6 +197,9 @@ def commit_log(repo, rev_range):
 def get_status(repo, target, do_fetch=False):
     """Build the full status dict for a repo."""
     log.debug("get_status: repo=%s target=%s fetch=%s", repo, target, do_fetch)
+    if not repo:
+        log.error("get_status: BW_REPO is not set")
+        return {"error": "BW_REPO is not set — point it at a git repo in .env"}
     if not is_git_repo(repo):
         log.error("get_status: no git repository found at %s", repo)
         return {"error": f"No git repository found at: {repo}"}
@@ -227,7 +224,7 @@ def get_status(repo, target, do_fetch=False):
     if resolve_ref(repo, target) is None:
         log.error("get_status: target branch %r not found", target)
         return {
-            "error": f"Target branch '{target}' not found (try --fetch).",
+            "error": f"Target branch '{target}' not found (set BW_FETCH=true).",
             "current_branch": current_branch,
         }
 
@@ -257,54 +254,6 @@ def get_status(repo, target, do_fetch=False):
     }
 
 
-# ---------------------------------------------------------------------------
-# Terminal output
-# ---------------------------------------------------------------------------
-def _print_commits(title, commits):
-    print(f"\n{title} ({len(commits)})")
-    if not commits:
-        print("  —")
-        return
-    for i, c in enumerate(reversed(commits), 0):
-        n = len(commits) - i
-        print(f"  {n:>3}. {c['date']}  {c['hash']}  {c['author']}: {c['message']}")
-
-
-def print_status(status):
-    if "error" in status:
-        print(f"❌ {status['error']}")
-        if status.get("current_branch"):
-            print(f"   current branch: {status['current_branch']}")
-        return
-
-    print("=" * 70)
-    print(f"Repo:    {status['repo']}")
-    print(f"Branch:  {status['current_branch']}")
-    print(f"Target:  {status['target_branch']}")
-    print(f"Ahead:   {status['ahead']}   Behind: {status['behind']}")
-
-    if status["behind"] > 0:
-        print(
-            f"\n⚠️  Behind {status['target_branch']} by {status['behind']} commit(s)."
-            " Merge/rebase before opening a PR."
-        )
-    else:
-        print(f"\n✅ Up to date with {status['target_branch']}.")
-
-    _print_commits(
-        f"📤 Local commits ({status['current_branch']} ahead of {status['target_branch']})",
-        status["local_commits"],
-    )
-    _print_commits(
-        f"📥 Incoming commits from {status['target_branch']}",
-        status["incoming_commits"],
-    )
-    print("=" * 70)
-
-
-# ---------------------------------------------------------------------------
-# Web server (so the box can be watched from the LAN)
-# ---------------------------------------------------------------------------
 def lan_ip():
     """Best-effort primary LAN IP for display."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -317,102 +266,45 @@ def lan_ip():
         s.close()
 
 
-def serve(repo, target, host, port, refresh, do_fetch):
-    from datetime import datetime
-
-    from flask import Flask, jsonify, render_template
-
-    app = Flask(__name__)
-
-    @app.route("/")
-    def index():
-        status = get_status(repo, target, do_fetch=do_fetch)
-        return render_template(
-            "status.html",
-            s=status,
-            refresh=refresh,
-            now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        )
-
-    @app.route("/api")
-    def api():
-        return jsonify(get_status(repo, target, do_fetch=do_fetch))
-
-    # Optionally lock the port down to a single client IP on startup: only
-    # BW_ALLOW_IP may reach it, everyone else is denied (via ufw).
-    if ALLOW_IP:
-        from firewall import allow_ip
-
-        try:
-            allow_ip(port, ALLOW_IP)
-            log.info("Firewall: only %s may reach port %s", ALLOW_IP, port)
-            print(f"🔒 Firewall: only {ALLOW_IP} may reach port {port}.")
-        except Exception as exc:
-            log.error("Firewall setup skipped: %s", exc)
-            print(f"⚠️  Firewall setup skipped: {exc}")
-
-    ip = lan_ip()
-    print(f"Serving branch status for: {repo}")
-    print(f"  local:   http://127.0.0.1:{port}")
-    print(f"  network: http://{ip}:{port}    (open this from another device)")
-    print(f"  json:    http://{ip}:{port}/api")
-    app.run(host=host, port=port, debug=False)
-
-
 # ---------------------------------------------------------------------------
-# CLI
+# Flask app
 # ---------------------------------------------------------------------------
-def main():
-    parser = argparse.ArgumentParser(description="Compare a git branch against a target.")
-    parser.add_argument(
-        "path",
-        nargs="?",
-        default=DEFAULT_REPO or None,
-        help="Path to the git working tree (env: BW_REPO)",
-    )
-    parser.add_argument(
-        "--target", default=DEFAULT_TARGET, help=f"Target branch (default: {DEFAULT_TARGET})"
-    )
-    parser.add_argument(
-        "--fetch",
-        action="store_true",
-        default=DEFAULT_FETCH,
-        help="Run 'git fetch' before comparing (env: BW_FETCH)",
-    )
-    parser.add_argument(
-        "--serve",
-        action="store_true",
-        default=DEFAULT_SERVE,
-        help="Run the web UI (env: BW_SERVE)",
-    )
-    parser.add_argument(
-        "--host", default=DEFAULT_HOST, help=f"Serve host (default: {DEFAULT_HOST})"
-    )
-    parser.add_argument(
-        "--port", type=int, default=DEFAULT_PORT, help=f"Serve port (default: {DEFAULT_PORT})"
-    )
-    parser.add_argument(
-        "--refresh",
-        type=int,
-        default=DEFAULT_REFRESH,
-        help=f"Web auto-refresh seconds (default: {DEFAULT_REFRESH})",
-    )
-    args = parser.parse_args()
+app = Flask(__name__)
 
-    if not args.path:
-        parser.error("a repo path is required (pass one or set BW_REPO)")
 
-    repo = os.path.abspath(os.path.expanduser(args.path))
+@app.route("/")
+def index():
+    status = get_status(REPO, TARGET, do_fetch=FETCH)
+    return render_template(
+        "status.html",
+        s=status,
+        refresh=REFRESH,
+        now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
 
-    if not is_git_repo(repo):
-        print(f"❌ No git repository found at: {repo}")
-        sys.exit(1)
 
-    if args.serve:
-        serve(repo, args.target, args.host, args.port, args.refresh, args.fetch)
-    else:
-        print_status(get_status(repo, args.target, do_fetch=args.fetch))
+@app.route("/api")
+def api():
+    return jsonify(get_status(REPO, TARGET, do_fetch=FETCH))
+
+
+# Optionally lock the port down to a single client IP on startup: only
+# BW_ALLOW_IP may reach it, everyone else is denied (via ufw).
+if ALLOW_IP:
+    from firewall import allow_ip
+
+    try:
+        allow_ip(PORT, ALLOW_IP)
+        log.info("Firewall: only %s may reach port %s", ALLOW_IP, PORT)
+    except Exception as exc:
+        log.error("Firewall setup skipped: %s", exc)
 
 
 if __name__ == "__main__":
-    main()
+    ip = lan_ip()
+    log.info("Serving branch status for %s on %s:%s", REPO, HOST, PORT)
+    print(f"Serving branch status for: {REPO}")
+    print(f"  local:   http://127.0.0.1:{PORT}")
+    print(f"  network: http://{ip}:{PORT}    (open this from another device)")
+    print(f"  json:    http://{ip}:{PORT}/api")
+    app.run(host=HOST, port=PORT, debug=False)

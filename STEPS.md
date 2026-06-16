@@ -14,7 +14,7 @@ cp .env.example .env
 ```
 İçinde:
 ```
-BW_REPO=/teammate/in/repo/yolu
+BW_REPO=/your/repo/path
 BW_PORT=9534
 BW_HOST=0.0.0.0
 BW_SERVE=true

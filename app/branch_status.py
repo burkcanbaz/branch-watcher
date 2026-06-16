@@ -174,18 +174,20 @@ def get_status(repo, target, do_fetch=False):
 
     current_branch = get_current_branch(repo)
 
+    fetch_warning = None
     if do_fetch:
         # 'origin/develop' -> remote 'origin'
         remote = target.split("/", 1)[0] if "/" in target else "origin"
         try:
             git(repo, "fetch", "--quiet", remote)
         except subprocess.CalledProcessError as exc:
+            # Best-effort: a fetch can fail for reasons that don't mean the app
+            # is broken — a read-only mount (Docker mounts the repo :ro), no
+            # network, or no write permission. Warn and carry on comparing
+            # against the refs we already have, rather than failing the page.
             detail = exc.output.decode(errors="replace").strip()
-            log.error("get_status: git fetch failed: %s", detail)
-            return {
-                "error": f"git fetch failed: {detail}",
-                "current_branch": current_branch,
-            }
+            log.warning("get_status: git fetch failed (continuing): %s", detail)
+            fetch_warning = f"git fetch skipped: {detail}"
 
     # Make sure the target ref actually exists (git resolves any namespace).
     if resolve_ref(repo, target) is None:
@@ -218,6 +220,7 @@ def get_status(repo, target, do_fetch=False):
         "behind": behind,
         "local_commits": commit_log(repo, f"{target}..HEAD"),
         "incoming_commits": commit_log(repo, f"HEAD..{target}"),
+        "warning": fetch_warning,
     }
 
 

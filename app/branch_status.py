@@ -78,92 +78,38 @@ def is_git_repo(repo):
     return resolve_git_dir(repo) is not None
 
 
-def get_current_branch(repo):
-    """Read the current branch name straight from .git/HEAD."""
-    git_dir = resolve_git_dir(repo)
-    if not git_dir:
-        return None
-    head_path = os.path.join(git_dir, "HEAD")
-    try:
-        with open(head_path, "r", encoding="utf-8") as fh:
-            head = fh.read().strip()
-    except OSError:
-        return None
-    if head.startswith("ref:"):
-        ref = head.split("ref:", 1)[1].strip()
-        # refs/heads/feature/x -> feature/x
-        return ref.replace("refs/heads/", "", 1)
-    # detached HEAD: HEAD holds a raw commit hash
-    return f"(detached @ {head[:8]})"
-
-
-def _read_packed_ref(git_dir, full_ref):
-    """Look up a fully-qualified ref in .git/packed-refs. Returns SHA or None."""
-    packed = os.path.join(git_dir, "packed-refs")
-    try:
-        with open(packed, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                # skip comments ('# pack-refs ...') and peeled-tag lines ('^<sha>')
-                if not line or line.startswith("#") or line.startswith("^"):
-                    continue
-                sha, _, name = line.partition(" ")
-                if name == full_ref:
-                    return sha
-    except OSError:
-        pass
-    return None
-
-
-def resolve_ref(repo, ref):
-    """Resolve a ref (e.g. 'origin/develop') to its commit SHA straight from
-    .git, with no git subprocess.
-
-    Tries the common ref namespaces in git's usual precedence and, for each,
-    reads the loose ref file first then falls back to .git/packed-refs.
-    Returns the 40-char SHA, or None if the ref cannot be found.
-    """
-    git_dir = resolve_git_dir(repo)
-    if not git_dir:
-        return None
-
-    # Candidate fully-qualified names, in roughly git's disambiguation order.
-    if ref.startswith("refs/"):
-        candidates = [ref]
-    else:
-        candidates = [
-            f"refs/heads/{ref}",
-            f"refs/tags/{ref}",
-            f"refs/remotes/{ref}",       # e.g. origin/develop
-            f"refs/remotes/{ref}/HEAD",  # e.g. origin -> origin/HEAD
-        ]
-
-    for full_ref in candidates:
-        # 1) loose ref: a file under .git/ holding the SHA
-        loose = os.path.join(git_dir, *full_ref.split("/"))
-        try:
-            with open(loose, "r", encoding="utf-8") as fh:
-                content = fh.read().strip()
-            # a loose ref may itself be a symbolic 'ref: refs/...' pointer
-            if content.startswith("ref:"):
-                return resolve_ref(repo, content.split("ref:", 1)[1].strip())
-            if content:
-                return content
-        except OSError:
-            pass
-        # 2) fall back to packed-refs
-        sha = _read_packed_ref(git_dir, full_ref)
-        if sha:
-            return sha
-    return None
-
-
 def git(repo, *args):
     return (
         subprocess.check_output(["git", *args], cwd=repo, stderr=subprocess.STDOUT)
         .decode()
         .strip()
     )
+
+
+def get_current_branch(repo):
+    """Return the current branch name, asking git itself (portable across
+    machines, worktrees and packed/loose ref layouts)."""
+    try:
+        branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    except subprocess.CalledProcessError:
+        return None
+    if branch == "HEAD":
+        # detached HEAD: report the short commit instead of the literal "HEAD"
+        try:
+            return f"(detached @ {git(repo, 'rev-parse', '--short', 'HEAD')})"
+        except subprocess.CalledProcessError:
+            return None
+    return branch
+
+
+def resolve_ref(repo, ref):
+    """Resolve a ref (e.g. 'origin/develop') to its commit SHA using git, so we
+    handle every namespace/packed/worktree case git itself handles. Returns the
+    SHA, or None if the ref cannot be found."""
+    try:
+        return git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    except subprocess.CalledProcessError:
+        return None
 
 
 def parse_commits(output):
@@ -204,6 +150,16 @@ def get_status(repo, target, do_fetch=False):
         log.error("get_status: no git repository found at %s", repo)
         return {"error": f"No git repository found at: {repo}"}
 
+    # Probe with a plain git call: if this fails it's a real git problem
+    # (e.g. "dubious ownership" on a teammate's box, or a corrupt repo) and we
+    # surface it instead of later misreporting it as "branch not found".
+    try:
+        git(repo, "rev-parse", "--git-dir")
+    except subprocess.CalledProcessError as exc:
+        detail = exc.output.decode(errors="replace").strip()
+        log.error("get_status: git unusable in %s: %s", repo, detail)
+        return {"error": f"git error: {detail}"}
+
     current_branch = get_current_branch(repo)
 
     if do_fetch:
@@ -219,8 +175,7 @@ def get_status(repo, target, do_fetch=False):
                 "current_branch": current_branch,
             }
 
-    # Make sure the target ref actually exists. Read it straight from .git
-    # (loose ref, falling back to packed-refs) — no subprocess needed.
+    # Make sure the target ref actually exists (git resolves any namespace).
     if resolve_ref(repo, target) is None:
         log.error("get_status: target branch %r not found", target)
         return {

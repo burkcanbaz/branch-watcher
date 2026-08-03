@@ -2,30 +2,34 @@ Teammate'in PC'sinde kurulum
 
 # A) Docker ile (önerilen) — 3 adım
 
-Sadece Docker gerekiyor; git/python/arp-scan image'ın içinde.
+Sadece Docker gerekiyor; git ve python image'ın içinde geliyor.
 
 **1) `.env`'i doldur**
 ```bash
 cd branch-watcher
 cp .env.example .env
 ```
-İçinde en az şunlar:
-```
-BW_REPO=/kendi/repo/yolun          # host'taki repo yolu
-BW_TARGET=origin/develop
-BW_MAIL_TO=ekip1@firma.com, ekip2@firma.com
-BW_SMTP_HOST=smtp.gmail.com
-BW_SMTP_PORT=587
-BW_SMTP_USER=kendi.adresin@gmail.com
-BW_SMTP_PASS=uygulama-sifresi      # Gmail: normal şifre DEĞİL, "uygulama şifresi"
-BW_SMTP_SECURITY=starttls
-```
+`.env` içinde **sadece şu 5 alan zorunlu** — gerisi varsayılanıyla çalışır:
 
-> Gmail uygulama şifresini <https://myaccount.google.com/apppasswords> adresinden
-> alırsın (2 Adımlı Doğrulama açık olmalı). Adım adım anlatım için README'deki
-> **"Gmail ile SMTP"** bölümüne bak.
-> Herkes kendi SMTP bilgisini kendi `.env`'ine yazar. `.env` gitignore'da ve
-> image'a kopyalanmaz — kimsenin şifresi repoya girmez.
+| alan | ne yazacaksın | örnek |
+| --- | --- | --- |
+| `BW_REPO` | izlenecek repo'nun host'taki yolu | `/home/kullanici/projem` |
+| `BW_MAIL_TO` | raporun gideceği adres(ler), virgülle | `ben@firma.com, ekip@firma.com` |
+| `BW_SMTP_HOST` | mail sunucusu | `smtp.gmail.com` |
+| `BW_SMTP_USER` | gönderen hesabın adresi | `ben@gmail.com` |
+| `BW_SMTP_PASS` | o hesabın uygulama şifresi | `abcd efgh ijkl mnop` |
+
+Hazır gelen varsayılanlar: `BW_SMTP_PORT=587`, `BW_SMTP_SECURITY=starttls`
+(Gmail için doğru), `BW_TARGET=origin/develop`, `BW_MAIL_TIME=09:15`,
+`BW_MAIL_TZ=Europe/Istanbul`. `BW_MAIL_FROM` boşsa `BW_SMTP_USER` kullanılır.
+
+> **Gmail'de normal hesap şifren çalışmaz**, 16 haneli bir uygulama şifresi
+> gerekir: <https://myaccount.google.com/apppasswords> (2 Adımlı Doğrulama açık
+> olmalı). Adım adım anlatım README'deki **"Gmail ile SMTP"** bölümünde.
+
+> Bilgilerini `.env`'e yaz, `.env.example`'a **değil**. `.env` gitignore'da ve
+> image'a kopyalanmaz — kimsenin şifresi repoya girmez; `.env.example` ise git'e
+> giren şablon dosya.
 
 **2) Ayarları doğrula (hemen bir mail atar)**
 ```bash
@@ -47,7 +51,8 @@ Faydalı komutlar:
 ```bash
 ./start.sh logs -f          # tüm loglar
 ./start.sh down             # durdur
-./start.sh restart          # .env değişikliğinden sonra
+./start.sh -d               # .env'i değiştirdikten sonra tekrar çalıştır
+                            # (restart .env'i YENİDEN OKUMAZ, up okur)
 ```
 
 ---
@@ -56,7 +61,7 @@ Faydalı komutlar:
 
 **1) Bağımlılıklar**
 ```bash
-sudo apt install git arp-scan        # arp-scan sadece BW_ALLOW_MAC kullanacaksa şart
+sudo apt install git
 cd branch-watcher
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -80,17 +85,14 @@ cd app
 python branch_status.py --serve          # ya da .env'de BW_SERVE=true ise: python branch_status.py
 ```
 
-**4) Firewall — iki seçenek**
+**4) Portu LAN'a açmak istersen (opsiyonel)**
 
-**Seçenek A — basit (portu LAN'a aç):**
+Web arayüzüne aynı ağdaki başka bir cihazdan bakacaksan makinende firewall
+açıksa porta izin ver:
 ```bash
-sudo ufw allow 9534/tcp
-# ya da daha dar, sadece kendi subnet'in:
-sudo ufw allow from 192.168.12.0/24 to any port 9534 proto tcp
-sudo ufw enable
-sudo ufw status
+sudo ufw allow 9534/tcp      # ya da daha dar: --from <subnet'in>
 ```
-> ufw zaten kapalıysa (inactive) hiç dokunmana gerek yok — port baştan açıktır. Kontrol: `sudo ufw status`.
+> Firewall kapalıysa (`sudo ufw status` → inactive) hiçbir şey yapmana gerek yok.
 
 **5) Günlük mail (Docker'sız)**
 

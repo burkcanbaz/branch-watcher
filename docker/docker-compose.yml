@@ -9,17 +9,10 @@ services:
     image: branch-watcher:latest
     container_name: branch-watcher
 
-    # Host networking so:
-    #   * arp-scan can actually see the LAN, and
-    #   * the web UI is reachable at the host's own IP:BW_PORT.
-    # With host mode there is no separate port mapping (the container shares
-    # the host's network stack directly).
-    network_mode: host
-
-    # Capabilities the optional firewall/scan feature needs.
-    cap_add:
-      - NET_ADMIN   # ufw rule changes
-      - NET_RAW     # arp-scan raw sockets
+    # Publish the web UI on the host's BW_PORT (default 9534). Plain bridge
+    # networking, so this works the same on Linux, macOS and Windows.
+    ports:
+      - "${BW_PORT:-9534}:${BW_PORT:-9534}"
 
     # Load user config (.env at the project root). Values below override the
     # bits that differ inside the container. Path is relative to the compose
@@ -28,11 +21,6 @@ services:
       - .env
 
     environment:
-      # The app runs as the non-root `app` user, which has passwordless sudo
-      # for ONLY arp-scan/ufw (see Dockerfile). `-n` fails fast instead of
-      # hanging on a password prompt. SUDO_CMD (default "sudo -n") is used by
-      # firewall.py for ufw.
-      ARP_SCAN_CMD: "sudo -n arp-scan --localnet"
       # Always run the web server inside the container.
       BW_SERVE: "true"
       # The watched repo is mounted at /repo (see volumes).
@@ -81,16 +69,18 @@ services:
       BW_LOG_FILE: "/app/logs/mailer.log"
       # Never start a web server from this service.
       BW_SERVE: "false"
-      # Uncomment together with the ~/.ssh mount below when the remote is a
-      # private repo fetched over SSH.
-      # GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new"
+      # For `git@github.com:...` remotes (see the ~/.ssh mount below).
+      # BatchMode: never hang waiting for a passphrase prompt nobody can answer
+      # — fail fast instead, and the mail says the numbers may be stale.
+      GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
 
     volumes:
       - ${BW_REPO:-./repo}:/repo:${BW_REPO_MOUNT:-rw}
       - branch-watcher-logs:/app/logs
-      # Optional: for a private remote fetched over SSH, give the container your
-      # keys (read-only) and uncomment GIT_SSH_COMMAND above.
-      # - ${HOME}/.ssh:/home/app/.ssh:ro
+      # Your SSH keys, read-only — the daily `git fetch` needs them because the
+      # remote is git@github.com:... The container never writes here. Comment
+      # this out if you fetch over HTTPS or turn BW_MAIL_FETCH off.
+      - ${BW_SSH_DIR:-${HOME}/.ssh}:/home/app/.ssh:ro
 
     command: ["python", "mailer.py"]
     restart: unless-stopped

@@ -1,35 +1,22 @@
 # Branch Watcher container image.
 #
-# Runs the web UI by default (branch_status.py --serve) as a non-root `app`
-# user. The optional MAC-locking firewall feature needs arp-scan + ufw, which
-# require root — so instead of running the whole app as root, the app user is
-# granted passwordless sudo for ONLY those two binaries (see the sudoers rule
-# below).
+# Serves the web UI (branch_status.py --serve) or runs the daily mailer
+# (mailer.py), always as a non-root `app` user. Nothing in here needs root.
 FROM python:3.12-slim
 
 # Runtime deps:
-#   git       - branch comparisons / optional fetch
-#   arp-scan  - resolve a MAC to its current LAN IP   (needs root)
-#   ufw       - lock the port down to a single client (needs root)
-#   iproute2  - networking utilities arp-scan/ufw lean on
-#   sudo      - so the non-root app user can run just arp-scan/ufw as root
+#   git            - branch comparisons / the fetch that keeps origin/develop fresh
+#   openssh-client - git needs it for `git@github.com:...` remotes. --no-install-
+#                    recommends means git does NOT pull it in by itself, and
+#                    without it every fetch dies with "cannot run ssh".
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
-        arp-scan \
-        ufw \
-        iproute2 \
-        sudo \
+        openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user the app actually runs as.
 RUN useradd --create-home --shell /bin/bash app
-
-# Grant the app user passwordless sudo for ONLY arp-scan and ufw, so the
-# optional firewall feature works without running everything as root.
-RUN echo 'app ALL=(root) NOPASSWD: /usr/sbin/arp-scan, /usr/sbin/ufw' \
-        > /etc/sudoers.d/branch-watcher \
-    && chmod 0440 /etc/sudoers.d/branch-watcher
 
 WORKDIR /app
 
@@ -37,8 +24,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Application code (arp_scan.py, branch_status.py, firewall.py, mailer.py,
-# logging_setup.py and templates/).
+# Application code (branch_status.py, mailer.py, logging_setup.py, templates/).
 COPY app/ ./
 
 # Logs dir owned by the app user (a named volume in compose preserves this

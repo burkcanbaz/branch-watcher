@@ -9,9 +9,7 @@ gösterir. Terminalden ya da LAN'dan erişilebilen bir web arayüzünden kullan�
 ```
 branch-watcher/
 ├── app/                     # uygulama kodu
-│   ├── arp_scan.py
 │   ├── branch_status.py
-│   ├── firewall.py
 │   ├── mailer.py            # her sabah 09:15'te rapor maili atan servis
 │   ├── logging_setup.py     # ortak logger (konsol + dönen log dosyası)
 │   └── templates/
@@ -20,8 +18,6 @@ branch-watcher/
 ├── docker/
 │   ├── Dockerfile
 │   └── docker-compose.yml
-├── scripts/
-│   └── setup-permissions.sh
 ├── .dockerignore
 ├── .env.example
 ├── requirements.txt
@@ -30,14 +26,12 @@ branch-watcher/
 
 ## Docker ile çalıştırma (önerilen)
 
-Her şey container'dan çalışacak şekilde paketlendi (git + arp-scan + ufw image
-içinde gelir):
+Her şey container'dan çalışacak şekilde paketlendi (git image içinde gelir;
+host'ta Docker'dan başka bir şey kurman gerekmez):
 
 ```bash
 cp .env.example .env
-# .env içinde izlemek istediğin repoyu host yolu olarak ver:
-#   BW_REPO=/home/kullanici/projem
-# ve mail ayarlarını doldur (aşağıdaki "Günlük mail raporu" bölümü).
+# .env'de aşağıdaki 5 alanı doldur, sonra:
 ./start.sh              # build edip ön planda çalıştırır
 ./start.sh -d           # arka planda (detached)
 ./start.sh down         # durdur ve kaldır
@@ -46,11 +40,35 @@ cp .env.example .env
 ./start.sh preview-mail # maili göndermeden terminale bas
 ```
 
+### Doldurman gereken 5 alan
+
+`.env` içinde sadece bunlar zorunlu; geri kalan her şey varsayılanıyla çalışır.
+
+| alan | ne yazacaksın | örnek |
+| --- | --- | --- |
+| `BW_REPO` | izlenecek repo'nun **host'taki** yolu | `/home/kullanici/projem` |
+| `BW_MAIL_TO` | raporun gideceği adres(ler), virgülle | `ben@firma.com, ekip@firma.com` |
+| `BW_SMTP_HOST` | mail sunucusu | `smtp.gmail.com` |
+| `BW_SMTP_USER` | gönderen hesabın adresi | `ben@gmail.com` |
+| `BW_SMTP_PASS` | o hesabın **uygulama şifresi**, boşluksuz (normal şifre değil) | `abcdefghijklmnop` |
+
+Varsayılanları: port `587` + `starttls` (Gmail için doğru), gönderim saati
+`09:15` `Europe/Istanbul`, hedef branch `origin/develop`. `BW_MAIL_FROM` boş
+bırakılırsa `BW_SMTP_USER` kullanılır. Uygulama şifresini nereden alacağın
+aşağıdaki **"Gmail ile SMTP"** bölümünde adım adım anlatılıyor.
+
+> `.env`'i **her değiştirdiğinde `./start.sh -d` çalıştır.** `./start.sh restart`
+> container'ı yeniden yaratmadığı için `.env`'i yeniden okumaz, eski değerlerle
+> devam eder.
+
+> Kendi bilgilerini `.env`'e yaz, `.env.example`'a **değil** — `.env` gitignore'da
+> ama `.env.example` git'e giriyor.
+
 Stack iki servis ayağa kaldırır:
 
 | servis | ne yapar |
 | --- | --- |
-| `branch-watcher` | web arayüzü (`BW_PORT`, varsayılan 9534), opsiyonel firewall/arp-scan |
+| `branch-watcher` | web arayüzü — `http://localhost:BW_PORT` (varsayılan 9534) |
 | `mailer` | her sabah `BW_MAIL_TIME`'da (varsayılan 09:15 Europe/Istanbul) rapor maili atar |
 
 Sadece maili istiyorsan web'i hiç açmadan çalıştırabilirsin:
@@ -59,12 +77,11 @@ Sadece maili istiyorsan web'i hiç açmadan çalıştırabilirsin:
 docker compose --project-directory . -f docker/docker-compose.yml up -d mailer
 ```
 
-Container, root değil **non-root `app` user'ı** olarak çalışır. `arp-scan` ve
-`ufw` root gerektirdiğinden, app user'a image içinde **sadece bu iki binary için**
-şifresiz sudo verilir (tüm uygulamayı root çalıştırmak yerine). `network_mode:
-host` ile çalışır; web arayüzü host'un kendi IP'sinde `BW_PORT` (varsayılan 9534)
-üzerinden açılır. arp-scan/ufw için gereken `NET_ADMIN` ve `NET_RAW` yetenekleri
-compose'da verilir.
+Her iki container da root değil **non-root `app` user'ı** olarak çalışır ve
+hiçbir ekstra yetki (capability) istemez. Ağ tarafı sade bridge networking:
+web arayüzü `BW_PORT` (varsayılan 9534) host'a publish edilir, yani
+`http://localhost:9534` — Linux, macOS ve Windows'ta aynı şekilde çalışır.
+Aynı ağdaki başka bir cihazdan bakmak istersen host'un LAN IP'sini kullan.
 
 İzlenen repo `/repo`'ya mount edilir. Varsayılan olarak **read-write**, çünkü
 `git fetch` `.git` içine yazmak zorunda (mail raporunun "behind" sayısı bugünkü
@@ -72,10 +89,6 @@ develop'a göre çıksın diye). Repo'ya hiç yazılmasın istiyorsan `.env`'de
 `BW_REPO_MOUNT=ro` yap ve `BW_FETCH`/`BW_MAIL_FETCH`'i kapat. Loglar `branch-watcher-logs` adlı bir named
 volume'a yazılır (non-root user sahipliğini koruyabilsin diye); konsola da
 basıldığı için `./start.sh logs -f` ile canlı izleyebilirsin.
-
-> `start.sh`, `up` akışında önce `scripts/setup-permissions.sh`'i çalıştırmayı
-> dener (host tarafı, opsiyonel firewall/cron kullanımı için). Docker akışı için
-> gerekli değildir — başarısız olursa stack yine de ayağa kalkar.
 
 ## Kurulum (Docker'sız, doğrudan Python)
 
@@ -93,7 +106,7 @@ cd app
 ```
 
 Tüm static değerler (`BW_REPO`, `BW_TARGET`, `BW_HOST`, `BW_PORT`, `BW_REFRESH`,
-`BW_FETCH`, `ARP_SCAN_CMD`, `ARP_INTERFACE`, `TARGET_MAC`) `.env` dosyasından
+`BW_FETCH`, `BW_SERVE` ve `BW_MAIL_*` / `BW_SMTP_*`) `.env` dosyasından
 okunur. Başka bir makineden çalıştırırken kodu değiştirmeden sadece `.env`
 değerlerini düzenlemen yeterli. CLI argümanları env değerlerini ezer.
 
@@ -195,6 +208,8 @@ Sayfa açıldığında:
 2. **Oluştur**'a bas.
 3. Sarı bir kutuda `abcd efgh ijkl mnop` gibi 4'erli 4 grup — toplam 16 harf —
    çıkar. **Bu kutu bir daha açılmaz**, hemen kopyala; sonra **Bitti**.
+   Google boşluklarla gösterir ama şifre aslında 16 karakter: `.env`'e yazarken
+   **boşlukları sil**.
 
 Bu şifre sadece bu uygulamaya özeldir; aynı sayfadan istediğin an iptal
 edebilirsin, hesabının asıl şifresi hiçbir yere yazılmaz.
@@ -213,15 +228,15 @@ BW_SMTP_HOST=smtp.gmail.com
 BW_SMTP_PORT=587
 BW_SMTP_SECURITY=starttls
 BW_SMTP_USER=kendi.adresin@gmail.com
-BW_SMTP_PASS="abcd efgh ijkl mnop"     # 2. adımdaki 16 haneli şifre
+BW_SMTP_PASS=abcdefghijklmnop          # 2. adımdaki 16 haneli şifre, boşluksuz
 BW_MAIL_FROM=kendi.adresin@gmail.com   # Gmail'de gönderen = hesabın kendisi
 BW_MAIL_TO=ekip1@firma.com, ekip2@firma.com
 ```
 
-> Tırnaklar okunurken kaldırılır, yani `"abcd efgh ijkl mnop"` da
-> `abcdefghijklmnop` da çalışır. Ama şifrede **boşluktan sonra `#`** geçiyorsa
-> (`pass #x`) tırnaksız yazma — o kısım yorum sayılıp kırpılır. Şüphedeysen
-> tırnak içine al; zararı yok.
+> Boşlukları silersen hiçbir tırnağa gerek kalmaz — en temiz yol bu. Boşluklu
+> bırakmak istersen tırnak içine al (`"abcd efgh ijkl mnop"`); tırnaklar
+> okunurken kaldırılır. Genel kural: bir değerde **boşluktan sonra `#`** varsa
+> (`pass #x`) mutlaka tırnak kullan, yoksa o kısım yorum sayılıp kırpılır.
 
 #### 4) Test et
 
@@ -250,7 +265,7 @@ kontrol et.
 | `535 5.7.8 Username and Password not accepted` | Normal hesap şifresi girilmiş. Uygulama şifresi üret (2. adım). |
 | `534 5.7.9 Application-specific password required` | Aynı sebep: 2 Adımlı Doğrulama açık ama uygulama şifresi kullanılmamış. |
 | Bağlantı 587'de zaman aşımına uğruyor | Ağın/ISS'in 587'yi kapatmış olabilir. `BW_SMTP_PORT=465` + `BW_SMTP_SECURITY=ssl` dene. |
-| `BW_SMTP_HOST is empty` gibi bir liste | `.env` doldurulmamış ya da `./start.sh restart` yapılmamış. |
+| `BW_SMTP_HOST is empty` gibi bir liste | `.env` doldurulmamış, ya da doldurulup `./start.sh -d` ile yeniden başlatılmamış (`restart` .env'i yeniden okumaz). |
 | Mail gitti ama gelmedi | Spam klasörüne bak; `BW_MAIL_TO`'daki adresi kontrol et. |
 
 ### Diğer sağlayıcılar
@@ -302,88 +317,36 @@ python mailer.py --dry-run            # sadece raporu bas
 python mailer.py --time 08:00 --tz Europe/Berlin
 ```
 
-> `git fetch` başarısız olursa (ağ yok, private repo'ya erişim yok) mail yine
-> gider: son `fetch` anındaki ref'lere göre rapor çıkarılır ve mailin başına
-> "bu sayılar bayat olabilir" uyarısı eklenir. Private bir remote'u SSH ile
-> fetch'lemen gerekiyorsa `docker/docker-compose.yml` içindeki `~/.ssh` mount'unu
-> ve `GIT_SSH_COMMAND` satırını yorumdan çıkar.
+> `git fetch` başarısız olursa (ağ yok, anahtar yok) mail yine gider: son
+> `fetch` anındaki ref'lere göre rapor çıkarılır ve mailin başına "bu sayılar
+> bayat olabilir" uyarısı, sebebiyle birlikte eklenir. Yani hiçbir zaman sessizce
+> yanlış bilgi almazsın.
 
-## Ağ taraması (arp-scan) — ayrı, bağımsız modül
+### SSH ile fetch (`git@github.com:...` remote'ları)
 
-`arp_scan.py` tamamen kendi başına çalışır; `branch_status.py`'den bağımsızdır.
-Başka bir projeye taşıyıp `arp_scan` / `find_ip_by_mac` fonksiyonlarını
-import edebilirsin.
+Repo'yu SSH ile klonladıysan — ekipte olağan durum — container'ın her sabah
+`git fetch` yapabilmesi için anahtarına ihtiyacı var. Bu **hazır ayarlı gelir**:
+compose, `~/.ssh` dizinini mailer container'ına **read-only** mount eder ve
+`GIT_SSH_COMMAND`'i ayarlar. Container bu dizine yazmaz, sadece okur.
 
-```bash
-# Ağdaki tüm cihazları listele
-python arp_scan.py
+Ek bir şey yapman gerekmiyor; şu durumlarda dokunman gerekir:
 
-# Belirli bir MAC'in IP'sini bul (sadece IP basar)
-python arp_scan.py --mac AA:BB:CC:DD:EE:FF
-
-# Arayüzü zorla
-python arp_scan.py --interface wlan0
-```
-
-Koddan kullanım:
-
-```python
-from arp_scan import arp_scan, find_ip_by_mac
-
-hosts = arp_scan()                              # [{ip, mac, vendor}, ...]
-ip = find_ip_by_mac("AA:BB:CC:DD:EE:FF")        # "192.168.1.42" ya da None
-```
-
-Ayarlar (env / `.env`): `ARP_SCAN_CMD`, `ARP_INTERFACE`, `TARGET_MAC`.
-
-## Erişimi tek bir cihaza kilitleme (firewall)
-
-Backend `0.0.0.0`'a bind olduğu için varsayılan olarak LAN'daki herkese açıktır.
-Sadece **kendi PC'nin** erişmesini istiyorsan, IP yerine **MAC** ver: backend
-açılışta o MAC'in güncel IP'sini `arp-scan` ile bulur ve `ufw` ile sadece o IP'ye
-izin verir. Ayrıca arka planda **her 10 dakikada bir** (`BW_FIREWALL_REFRESH`, saniye)
-MAC'i yeniden çözüp kuralı tazeler — yani backend çalışırken IP'n DHCP ile değişse
-bile en geç bir sonraki tazelemede yeni IP'ne göre güncellenir.
-
-```bash
-# 1) arp-scan + ufw için şifresiz sudo'yu bir kez kur (backend'in olduğu makinede):
-./scripts/setup-permissions.sh
-
-# 2) .env'e kendi makinenin MAC'ini yaz:
-#    BW_ALLOW_MAC=AA:BB:CC:DD:EE:FF
-
-# 3) backend'i başlat — açılışta firewall kuralı otomatik uygulanır:
-uv run branch_status.py
-```
-
-Kuralı elle de uygulayabilirsin:
-
-```bash
-python firewall.py --port 9534 --mac AA:BB:CC:DD:EE:FF
-```
-
-Backend'i hiç çalıştırmadan, gerçek bir cron job olarak da kurabilirsin
-(10 dakikada bir):
-
-```cron
-*/10 * * * * cd /path/to/branch-watcher/app && /path/to/.venv/bin/python firewall.py --port 9534 --mac AA:BB:CC:DD:EE:FF
-```
-
-> `BW_ALLOW_MAC` boşsa firewall'a hiç dokunulmaz (LAN'a açık kalır). Şifresiz sudo
-> kurulmamışsa firewall adımı atlanır ve backend yine de ayağa kalkar (uyarı basar).
-
-> Not: `arp-scan` root ister (varsayılan komut `sudo arp-scan --localnet`).
-> Terminalden şifreyi sorar; bir backend içinden çağıracaksan şifresiz sudo ver:
->
-> ```bash
-> echo "$USER ALL=(root) NOPASSWD: /usr/sbin/arp-scan" | sudo tee /etc/sudoers.d/arp-scan
-> ```
+- **HTTPS remote kullanıyorsan** bu mount'a gerek yok, compose'daki satırı
+  silebilirsin (public repo'da HTTPS fetch anahtarsız çalışır).
+- **Anahtarın başka bir yerdeyse:** `.env`'de `BW_SSH_DIR=/başka/yol` ver.
+- **Linux'ta kullanıcı uid'in 1000 değilse:** container `app` user'ı (uid 1000)
+  anahtarını okuyamaz. Anahtarı ayrı bir klasöre kopyalayıp
+  `sudo chown -R 1000:1000 <klasör>` yap ve `BW_SSH_DIR` ile onu göster.
+  (macOS/Windows'ta Docker Desktop sahipliği kendisi eşlediği için sorun çıkmaz.)
+- **Anahtarında passphrase varsa:** container şifreyi soramaz, fetch hemen hata
+  verir (mail yine gider, bayat uyarısıyla). Passphrase'siz bir read-only deploy
+  key kullan ya da `BW_MAIL_FETCH=false` yap.
 
 ## Loglama
 
 Tüm modüller `app/logging_setup.py`'deki ortak logger'ı kullanır: her önemli
-adım loglanır ve hatalar (ör. bir MAC'in LAN'da bulunamaması, arp-scan/ufw/git
-komutlarının başarısız olması) `ERROR` seviyesinde yazılır. Loglar hem konsola
+adım loglanır ve hatalar (ör. `git fetch`'in ya da mail gönderiminin
+başarısız olması) `ERROR` seviyesinde yazılır. Loglar hem konsola
 hem de dönen bir dosyaya (`branch_watcher.log`, ~1MB'da döner, 3 yedek) gider.
 
 Ayarlar (env / `.env`):

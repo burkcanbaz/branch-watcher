@@ -59,20 +59,6 @@ case "${1:-}" in
             run --rm mailer python mailer.py "$MODE" "$@"
         ;;
     *)
-        # Grant passwordless sudo for arp-scan + ufw on the HOST. The container
-        # has its own in-image sudoers rule for the non-root `app` user, so this
-        # is NOT needed for the Docker flow — it's only for optional host-side
-        # firewall/cron usage (running firewall.py directly on the host).
-        # Best-effort: a failure (no sudo, password prompt declined, etc.) must
-        # not stop the stack.
-        if [[ -f scripts/setup-permissions.sh ]]; then
-            # Make it executable first, so you only ever have to chmod +x start.sh.
-            chmod +x scripts/setup-permissions.sh
-            echo "▶ Running scripts/setup-permissions.sh (host sudo setup)..."
-            if ! ./scripts/setup-permissions.sh; then
-                echo "⚠️  setup-permissions.sh failed/skipped — continuing anyway." >&2
-            fi
-        fi
         exec "${COMPOSE[@]}" "${PROJECT_DIR[@]}" -f "$COMPOSE_FILE" up --build "$@"
         ;;
 esac

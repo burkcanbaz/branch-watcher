@@ -56,12 +56,6 @@ DEFAULT_REFRESH = int(os.getenv("BW_REFRESH", "30"))
 DEFAULT_FETCH = _env_bool("BW_FETCH", False)
 DEFAULT_SERVE = _env_bool("BW_SERVE", False)
 
-# If set, the backend locks its port down to this MAC's current LAN IP (via
-# ufw) and re-applies it every BW_FIREWALL_REFRESH seconds so it keeps tracking
-# the client's IP. Empty = open to the whole LAN. See firewall.py.
-ALLOW_MAC = os.getenv("BW_ALLOW_MAC", "")
-FIREWALL_REFRESH = int(os.getenv("BW_FIREWALL_REFRESH", "600"))  # 10 minutes
-
 
 # ---------------------------------------------------------------------------
 # Git helpers
@@ -339,41 +333,18 @@ def serve(repo, target, host, port, refresh, do_fetch):
     def api():
         return jsonify(get_status(repo, target, do_fetch=do_fetch))
 
-    # Optionally lock the port down to a single machine. A background thread
-    # re-resolves the MAC -> current IP and re-applies the ufw rule every
-    # FIREWALL_REFRESH seconds, so it keeps tracking the client even if its IP
-    # changes (DHCP) while the backend is running.
-    if ALLOW_MAC:
-        import threading
-        import time
-
-        from firewall import allow_only
-
-        def _refresh_firewall():
-            while True:
-                try:
-                    allowed_ip = allow_only(port, ALLOW_MAC)
-                    log.info(
-                        "Firewall: only %s (MAC %s) may reach port %s",
-                        allowed_ip, ALLOW_MAC, port,
-                    )
-                    print(
-                        f"🔒 Firewall: only {allowed_ip} (MAC {ALLOW_MAC}) may reach port {port}."
-                    )
-                except Exception as exc:
-                    log.error("Firewall refresh skipped: %s", exc)
-                    print(f"⚠️  Firewall refresh skipped: {exc}")
-                time.sleep(FIREWALL_REFRESH)
-
-        # daemon: dies with the process; first pass runs immediately at startup.
-        threading.Thread(target=_refresh_firewall, daemon=True).start()
-        print(f"   (firewall rule refreshes every {FIREWALL_REFRESH}s)")
-
-    ip = lan_ip()
     print(f"Serving branch status for: {repo}")
     print(f"  local:   http://127.0.0.1:{port}")
-    print(f"  network: http://{ip}:{port}    (open this from another device)")
-    print(f"  json:    http://{ip}:{port}/api")
+    if os.path.exists("/.dockerenv"):
+        # In a container lan_ip() would report the container's own address,
+        # which is useless to whoever is reading this log — the port is
+        # published on the host instead.
+        print(f"  network: http://<host-ip>:{port}    (published from the container)")
+        print(f"  json:    http://<host-ip>:{port}/api")
+    else:
+        ip = lan_ip()
+        print(f"  network: http://{ip}:{port}    (open this from another device)")
+        print(f"  json:    http://{ip}:{port}/api")
     app.run(host=host, port=port, debug=False)
 
 

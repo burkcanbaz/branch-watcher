@@ -1,0 +1,93 @@
+{# Daily branch-status e-mail. Styles are inlined on purpose: mail clients
+   (Gmail, Outlook) strip <style> blocks, so every rule lives on the element. #}
+{% macro table(commits) %}
+{% if commits %}
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;margin-top:8px;">
+  <tr>
+    <th align="left" style="padding:9px 12px;background:#f9fafb;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e5e7eb;">Date</th>
+    <th align="left" style="padding:9px 12px;background:#f9fafb;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e5e7eb;">Author</th>
+    <th align="left" style="padding:9px 12px;background:#f9fafb;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e5e7eb;">Message</th>
+    <th align="left" style="padding:9px 12px;background:#f9fafb;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #e5e7eb;">Hash</th>
+  </tr>
+  {% for c in commits %}
+  <tr style="background:{{ '#fbfcfd' if loop.index0 % 2 else '#ffffff' }};">
+    <td style="padding:9px 12px;border-bottom:1px solid #f1f3f5;white-space:nowrap;">{{ c.date }}</td>
+    <td style="padding:9px 12px;border-bottom:1px solid #f1f3f5;">{{ c.author }}</td>
+    <td style="padding:9px 12px;border-bottom:1px solid #f1f3f5;">{{ c.message }}</td>
+    <td style="padding:9px 12px;border-bottom:1px solid #f1f3f5;font-family:Consolas,Menlo,monospace;color:#d6336c;">{{ c.hash }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p style="margin:8px 0 0;color:#6b7280;font-size:13px;">None.</p>
+{% endif %}
+{% endmacro %}
+<!doctype html>
+<html>
+<head><meta charset="utf-8" /><title>Branch Status</title></head>
+<body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#333;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f4f6f8;">
+    <tr><td align="center" style="padding:24px 12px;">
+      <table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:860px;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e5e7eb;">
+
+        {% if s.error %}
+        <tr><td style="background:#1f2937;color:#ffffff;padding:18px 22px;">
+          <h1 style="margin:0;font-size:18px;">❌ Branch Status</h1>
+        </td></tr>
+        <tr><td style="padding:20px 22px;">
+          <p style="margin:0;color:#dc3545;font-weight:bold;font-size:14px;">{{ s.error }}</p>
+          {% if s.current_branch %}
+          <p style="margin:10px 0 0;font-size:13px;">current branch: <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;color:#d6336c;">{{ s.current_branch }}</code></p>
+          {% endif %}
+        </td></tr>
+
+        {% else %}
+        <tr><td style="background:#1f2937;color:#ffffff;padding:18px 22px;">
+          <h1 style="margin:0;font-size:18px;">
+            {% if verdict == 'merge-needed' %}⚠️ Merge needed{% else %}✅ Branch is up to date{% endif %}
+          </h1>
+          <div style="color:#9ca3af;font-size:12px;margin-top:6px;">repo: {{ s.repo }}</div>
+          <div style="color:#9ca3af;font-size:12px;margin-top:2px;">current branch: {{ s.current_branch }}</div>
+          <div style="color:#9ca3af;font-size:12px;margin-top:2px;">target branch: {{ s.target_branch }}</div>
+        </td></tr>
+
+        <tr><td style="padding:20px 22px;">
+          <p style="margin:0 0 4px;">
+            <span style="display:inline-block;padding:5px 10px;border-radius:6px;font-size:12px;font-weight:700;color:#fff;background:#0d6efd;margin-right:8px;">AHEAD {{ s.ahead }}</span>
+            <span style="display:inline-block;padding:5px 10px;border-radius:6px;font-size:12px;font-weight:700;color:#fff;background:#dc3545;">BEHIND {{ s.behind }}</span>
+          </p>
+
+          {% if s.stale %}
+          <div style="margin:16px 0;padding:12px 14px;border-radius:8px;font-size:13px;background:#fff8e6;border:1px solid #ffe08a;color:#8a6100;">
+            ⚠️ Could not refresh the remote, so these numbers may be stale: {{ s.stale }}
+          </div>
+          {% endif %}
+
+          {% if verdict == 'merge-needed' %}
+          <div style="margin:16px 0;padding:12px 14px;border-radius:8px;font-size:13px;background:#fff8e6;border:1px solid #ffe08a;color:#8a6100;">
+            ⚠️ <b>{{ s.current_branch }}</b> is {{ s.behind }} commit(s) behind <b>{{ s.target_branch }}</b>.
+            Merge or rebase before opening a PR:
+            <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;color:#d6336c;">git pull --rebase origin {{ s.target_branch.split('/')[-1] }}</code>
+          </div>
+          {% else %}
+          <div style="margin:16px 0;padding:12px 14px;border-radius:8px;font-size:13px;background:#eafaf0;border:1px solid #b7e4c7;color:#1b6b3a;">
+            ✅ Up to date with <b>{{ s.target_branch }}</b> — nothing to merge.
+          </div>
+          {% endif %}
+
+          <h3 style="margin:24px 0 0;font-size:14px;">📥 Incoming commits from {{ s.target_branch }} ({{ s.incoming_commits|length }})</h3>
+          {{ table(s.incoming_commits) }}
+
+          <h3 style="margin:24px 0 0;font-size:14px;">📤 Local commits ahead of {{ s.target_branch }} ({{ s.local_commits|length }})</h3>
+          {{ table(s.local_commits) }}
+        </td></tr>
+        {% endif %}
+
+        <tr><td style="padding:14px 22px;border-top:1px solid #f1f3f5;color:#888;font-size:12px;">
+          branch-watcher · {{ now }} ({{ tz }}){% if host %} · {{ host }}{% endif %}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>

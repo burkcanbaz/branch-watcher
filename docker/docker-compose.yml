@@ -43,12 +43,56 @@ services:
     volumes:
       # The git repository you want to watch: BW_REPO from .env is the path on
       # the HOST and is mounted to /repo inside the container (the BW_REPO env
-      # above points the app at /repo). Read-only is enough unless --fetch.
-      - ${BW_REPO:-./repo}:/repo:ro
+      # above points the app at /repo). Mounted read-write by default because
+      # 'git fetch' needs to write into .git; set BW_REPO_MOUNT=ro in .env to
+      # forbid that (then also turn BW_FETCH/BW_MAIL_FETCH off).
+      - ${BW_REPO:-./repo}:/repo:${BW_REPO_MOUNT:-rw}
       # Persisted, rotating log files. A named volume (not a host bind mount)
       # so the non-root `app` user keeps ownership and can write to it.
       - branch-watcher-logs:/app/logs
 
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Daily e-mail report. Wakes up at BW_MAIL_TIME (default 09:15 Europe/Istanbul
+  # = UTC+3), compares the current branch against BW_TARGET and mails everyone
+  # in BW_MAIL_TO whether a merge is needed. No cron and no git hooks: the
+  # container keeps its own schedule, so it just has to stay running.
+  # ---------------------------------------------------------------------------
+  mailer:
+    # Same build as above, so `docker compose up` produces one image and this
+    # service also works when started on its own (`docker compose up mailer`).
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: branch-watcher:latest
+    container_name: branch-watcher-mailer
+
+    # Plain bridge networking: this one only needs outbound SMTP — no host
+    # network, no NET_ADMIN/NET_RAW. Keeps it working on Docker Desktop too.
+
+    env_file:
+      - .env
+
+    environment:
+      BW_REPO: "/repo"
+      # A separate log file: two processes rotating the same file would corrupt
+      # each other's output.
+      BW_LOG_FILE: "/app/logs/mailer.log"
+      # Never start a web server from this service.
+      BW_SERVE: "false"
+      # Uncomment together with the ~/.ssh mount below when the remote is a
+      # private repo fetched over SSH.
+      # GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new"
+
+    volumes:
+      - ${BW_REPO:-./repo}:/repo:${BW_REPO_MOUNT:-rw}
+      - branch-watcher-logs:/app/logs
+      # Optional: for a private remote fetched over SSH, give the container your
+      # keys (read-only) and uncomment GIT_SSH_COMMAND above.
+      # - ${HOME}/.ssh:/home/app/.ssh:ro
+
+    command: ["python", "mailer.py"]
     restart: unless-stopped
 
 volumes:

@@ -1,2 +1,6 @@
 Flask>=3.0
+Jinja2>=3.1
 python-dotenv>=1.0
+# Timezone database for zoneinfo (BW_MAIL_TZ), so the daily mail fires at the
+# right local time even on slim images that ship no system tzdata.
+tzdata>=2024.1

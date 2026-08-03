@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Build and run the whole branch-watcher stack in Docker.
 #
-#   ./start.sh            # build (if needed) and run in the foreground
-#   ./start.sh -d         # run detached, in the background
-#   ./start.sh down       # stop and remove the stack
+#   ./start.sh              # build (if needed) and run in the foreground
+#   ./start.sh -d           # run detached, in the background
+#   ./start.sh down         # stop and remove the stack
+#   ./start.sh test-mail    # send one report right now (verify SMTP settings)
+#   ./start.sh preview-mail # print the report to the terminal, send nothing
 #
 # Any extra arguments are passed straight through to `docker compose`.
 set -euo pipefail
@@ -37,8 +39,24 @@ fi
 
 # `down` (and other compose subcommands) pass through; default action is `up`.
 case "${1:-}" in
-    down|stop|logs|ps|restart|build|pull)
+    down|stop|logs|ps|restart|build|pull|config|run|exec|kill)
         exec "${COMPOSE[@]}" "${PROJECT_DIR[@]}" -f "$COMPOSE_FILE" "$@"
+        ;;
+    test-mail|preview-mail)
+        # One-off run of the mailer, outside the daily schedule. Useful right
+        # after filling in the SMTP settings: test-mail actually delivers,
+        # preview-mail only renders the report to stdout.
+        # Note: a bare `[[ ... ]] && ...` would abort the script under `set -e`
+        # whenever the test is false, so use a real if.
+        if [[ "$1" == preview-mail ]]; then
+            MODE="--dry-run"
+        else
+            MODE="--once"
+        fi
+        shift
+        "${COMPOSE[@]}" "${PROJECT_DIR[@]}" -f "$COMPOSE_FILE" build mailer
+        exec "${COMPOSE[@]}" "${PROJECT_DIR[@]}" -f "$COMPOSE_FILE" \
+            run --rm mailer python mailer.py "$MODE" "$@"
         ;;
     *)
         # Grant passwordless sudo for arp-scan + ufw on the HOST. The container
